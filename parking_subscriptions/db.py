@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     monthly_fee INTEGER,
     status TEXT NOT NULL DEFAULT 'active',
     created_by TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    last_paid_date TEXT
 );
 
 CREATE TABLE IF NOT EXISTS notifications_outbox (
@@ -43,4 +44,18 @@ def connect() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Adds columns introduced after a database file already existed.
+
+    CREATE TABLE IF NOT EXISTS only helps brand-new files; a physical
+    sqlite file created before a schema change stays on the old shape
+    forever otherwise (this bit us once already with end_date NOT NULL).
+    """
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(subscriptions)")}
+    if "last_paid_date" not in existing:
+        conn.execute("ALTER TABLE subscriptions ADD COLUMN last_paid_date TEXT")
+        conn.commit()

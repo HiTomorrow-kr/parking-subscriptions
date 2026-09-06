@@ -40,10 +40,30 @@ def _cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_id(conn, args: argparse.Namespace) -> int:
+    """Resolves --id/--plate/--room (mutually exclusive) to a subscription id."""
+    if args.room:
+        return subscriptions.find_active_by_room(conn, args.room)["id"]
+    if args.plate:
+        return subscriptions.find_active_by_plate(conn, args.plate)["id"]
+    return args.id
+
+
 def _cmd_deactivate(args: argparse.Namespace) -> int:
     conn = db.connect()
     try:
-        sub = subscriptions.deactivate(conn, args.id)
+        sub = subscriptions.deactivate(conn, _resolve_id(conn, args))
+    except ValueError as e:
+        _print_err(str(e))
+        return 1
+    _print_ok(sub)
+    return 0
+
+
+def _cmd_pay(args: argparse.Namespace) -> int:
+    conn = db.connect()
+    try:
+        sub = subscriptions.mark_paid(conn, _resolve_id(conn, args), args.date)
     except ValueError as e:
         _print_err(str(e))
         return 1
@@ -54,6 +74,13 @@ def _cmd_deactivate(args: argparse.Namespace) -> int:
 def _cmd_check_expiry(args: argparse.Namespace) -> int:
     conn = db.connect()
     result = subscriptions.check_expiry(conn)
+    _print_ok(result)
+    return 0
+
+
+def _cmd_check_payments(args: argparse.Namespace) -> int:
+    conn = db.connect()
+    result = subscriptions.check_payments(conn)
     _print_ok(result)
     return 0
 
@@ -77,11 +104,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_list.set_defaults(func=_cmd_list)
 
     p_deactivate = sub.add_parser("deactivate", help="Cancel a subscription")
-    p_deactivate.add_argument("--id", type=int, required=True)
+    g_deactivate = p_deactivate.add_mutually_exclusive_group(required=True)
+    g_deactivate.add_argument("--id", type=int)
+    g_deactivate.add_argument("--plate")
+    g_deactivate.add_argument("--room")
     p_deactivate.set_defaults(func=_cmd_deactivate)
+
+    p_pay = sub.add_parser("pay", help="Record a payment for a subscription")
+    g_pay = p_pay.add_mutually_exclusive_group(required=True)
+    g_pay.add_argument("--id", type=int)
+    g_pay.add_argument("--plate")
+    g_pay.add_argument("--room")
+    p_pay.add_argument("--date", help="YYYY-MM-DD (defaults to today)")
+    p_pay.set_defaults(func=_cmd_pay)
 
     p_check = sub.add_parser("check-expiry", help="Scan subscriptions and queue expiry notifications")
     p_check.set_defaults(func=_cmd_check_expiry)
+
+    p_check_pay = sub.add_parser("check-payments", help="Scan subscriptions and queue payment-due reminders")
+    p_check_pay.set_defaults(func=_cmd_check_payments)
 
     return parser
 

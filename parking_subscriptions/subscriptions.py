@@ -1,3 +1,4 @@
+import calendar
 import sqlite3
 from datetime import datetime, date
 
@@ -43,11 +44,23 @@ def register(
         dict: The newly created subscription record.
 
     Raises:
-        ValueError: If dates are malformed or end_date is not after start_date.
+        ValueError: If dates are malformed, end_date is not after start_date,
+            or room already has an active subscription (one car per room —
+            room is a fixed, permanent assignment for monthly parking).
     """
     plate_number = (plate_number or "").strip()
     if not plate_number:
         raise ValueError("plate_number is required")
+
+    room = (room or "").strip() or None
+    if room is not None:
+        existing = conn.execute(
+            "SELECT plate_number FROM subscriptions WHERE room = ? AND status = 'active'", (room,)
+        ).fetchone()
+        if existing:
+            raise ValueError(
+                f"Room {room!r} already has an active subscription ({existing['plate_number']})"
+            )
 
     start = _parse_date(start_date, "start_date")
     end_iso = None
@@ -78,6 +91,46 @@ def register(
     return get(conn, cursor.lastrowid)
 
 
+def find_active_by_plate(conn: sqlite3.Connection, plate_number: str) -> dict:
+    """Finds the single active subscription for a plate number.
+
+    Lets callers (CLI, bots) identify a subscription by plate instead of by
+    id, which nobody has memorized.
+
+    Raises:
+        ValueError: If there is no active subscription for that plate, or
+            more than one (ambiguous — caller should use the id instead).
+    """
+    plate_number = (plate_number or "").strip()
+    rows = conn.execute(
+        "SELECT * FROM subscriptions WHERE plate_number = ? AND status = 'active'",
+        (plate_number,),
+    ).fetchall()
+    if not rows:
+        raise ValueError(f"No active subscription for plate {plate_number!r}")
+    if len(rows) > 1:
+        raise ValueError(f"Multiple active subscriptions for plate {plate_number!r}; use the id instead")
+    return dict(rows[0])
+
+
+def find_active_by_room(conn: sqlite3.Connection, room: str) -> dict:
+    """Finds the single active subscription for a room number.
+
+    Raises:
+        ValueError: If there is no active subscription for that room, or
+            more than one (ambiguous — caller should use the id instead).
+    """
+    room = (room or "").strip()
+    rows = conn.execute(
+        "SELECT * FROM subscriptions WHERE room = ? AND status = 'active'", (room,)
+    ).fetchall()
+    if not rows:
+        raise ValueError(f"No active subscription for room {room!r}")
+    if len(rows) > 1:
+        raise ValueError(f"Multiple active subscriptions for room {room!r}; use the id instead")
+    return dict(rows[0])
+
+
 def get(conn: sqlite3.Connection, subscription_id: int) -> dict:
     """Fetches a single subscription by id.
 
@@ -92,23 +145,68 @@ def get(conn: sqlite3.Connection, subscription_id: int) -> dict:
     return dict(row)
 
 
-def list_subscriptions(conn: sqlite3.Connection, status: str | None = None) -> list[dict]:
+def _paid_current_month(last_paid_date: str | None, today: date) -> bool:
+    if not last_paid_date:
+        return False
+    paid = _parse_date(last_paid_date, "last_paid_date")
+    return (paid.year, paid.month) == (today.year, today.month)
+
+
+def list_subscriptions(
+    conn: sqlite3.Connection, status: str | None = None, today: date | None = None
+) -> list[dict]:
     """Lists subscriptions, optionally filtered by status.
 
     Args:
         conn: Open database connection.
         status: One of 'active' / 'expired' / 'cancelled', or None for all.
+        today: Override for "today" (used in tests); defaults to date.today().
 
     Returns:
-        list[dict]: Matching subscription records, most recent first.
+        list[dict]: Matching subscription records, ordered by room number
+            (numerically; rooms are a fixed per-subscription assignment, so
+            this is the natural sort for a human scanning the list), with
+            subscriptions that have no room listed last. Each record
+            includes a computed "paid_current_month" bool: whether
+            last_paid_date falls in the current calendar month.
     """
+    today = today or date.today()
+    order_by = "ORDER BY room IS NULL, CAST(room AS INTEGER), room"
     if status:
         rows = conn.execute(
-            "SELECT * FROM subscriptions WHERE status = ? ORDER BY id DESC", (status,)
+            f"SELECT * FROM subscriptions WHERE status = ? {order_by}", (status,)
         ).fetchall()
     else:
-        rows = conn.execute("SELECT * FROM subscriptions ORDER BY id DESC").fetchall()
-    return [dict(row) for row in rows]
+        rows = conn.execute(f"SELECT * FROM subscriptions {order_by}").fetchall()
+
+    result = [dict(row) for row in rows]
+    for r in result:
+        r["paid_current_month"] = _paid_current_month(r.get("last_paid_date"), today)
+    return result
+
+
+def mark_paid(conn: sqlite3.Connection, subscription_id: int, paid_date: str | None = None) -> dict:
+    """Records a payment for a subscription.
+
+    Args:
+        conn: Open database connection.
+        subscription_id: The subscription being paid for.
+        paid_date: Date the payment was made (YYYY-MM-DD), or None for today.
+
+    Returns:
+        dict: The updated subscription record.
+
+    Raises:
+        ValueError: If no subscription exists with that id, or paid_date is malformed.
+    """
+    get(conn, subscription_id)  # raises if missing
+    paid = _parse_date(paid_date, "paid_date") if paid_date else date.today()
+    conn.execute(
+        "UPDATE subscriptions SET last_paid_date = ? WHERE id = ?",
+        (paid.isoformat(), subscription_id),
+    )
+    conn.commit()
+    return get(conn, subscription_id)
 
 
 def deactivate(conn: sqlite3.Connection, subscription_id: int) -> dict:
@@ -127,7 +225,7 @@ def deactivate(conn: sqlite3.Connection, subscription_id: int) -> dict:
 
 
 def _expiry_soon_message(sub: dict, days_left: int) -> str:
-    label = f"{sub['room']} " if sub.get("room") else ""
+    label = f"{sub['room']}호 " if sub.get("room") else ""
     if days_left == 0:
         return f"[정기 주차 알림] {label}{sub['plate_number']} 정기 주차권이 오늘({sub['end_date']}) 만료됩니다."
     return (
@@ -137,7 +235,7 @@ def _expiry_soon_message(sub: dict, days_left: int) -> str:
 
 
 def _expired_message(sub: dict) -> str:
-    label = f"{sub['room']} " if sub.get("room") else ""
+    label = f"{sub['room']}호 " if sub.get("room") else ""
     return f"[정기 주차 만료] {label}{sub['plate_number']} 정기 주차권이 만료되었습니다 ({sub['end_date']}). 갱신이 필요합니다."
 
 
@@ -189,6 +287,78 @@ def check_expiry(conn: sqlite3.Connection, today: date | None = None) -> dict:
                 (sub["id"], _expired_message(sub), created_at),
             )
             queued += cursor.rowcount
+
+    conn.commit()
+    return {"checked": len(active), "queued": queued}
+
+
+def _current_period_start(start: date, today: date) -> date:
+    """The most recent monthly billing due date on or before `today`.
+
+    The due date is the contract's own anniversary — the day-of-month of
+    `start` — not the calendar month, since billing runs on the contract
+    date (e.g. a subscription started on the 12th is due on the 12th of
+    every month). Clamped to the last day of a shorter month.
+    """
+    day = start.day
+    year, month = today.year, today.month
+    candidate = date(year, month, min(day, calendar.monthrange(year, month)[1]))
+    if candidate > today:
+        month -= 1
+        if month == 0:
+            month, year = 12, year - 1
+        candidate = date(year, month, min(day, calendar.monthrange(year, month)[1]))
+    return candidate
+
+
+def _payment_due_message(sub: dict, period_start: date) -> str:
+    label = f"{sub['room']}호 " if sub.get("room") else ""
+    return (
+        f"[정기 주차 미납] {label}{sub['plate_number']} 정기 주차 결제가 필요합니다 "
+        f"(이번 결제일: {period_start.isoformat()})."
+    )
+
+
+def check_payments(conn: sqlite3.Connection, today: date | None = None) -> dict:
+    """Scans active subscriptions and queues a reminder for anyone unpaid past their due date.
+
+    Billing is anchored to each subscription's own contract-date anniversary
+    (see _current_period_start), not the calendar month. Once due, an unpaid
+    subscription is re-flagged once per day until a payment is recorded for
+    the current period.
+
+    Args:
+        conn: Open database connection.
+        today: Override for "today" (used in tests); defaults to date.today().
+
+    Returns:
+        dict: {"checked": <active subscriptions scanned>, "queued": <notifications queued>}
+    """
+    today = today or date.today()
+    active = list_subscriptions(conn, status="active")
+    queued = 0
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    for sub in active:
+        start = _parse_date(sub["start_date"], "start_date")
+        period_start = _current_period_start(start, today)
+        if period_start < start:
+            continue  # not yet due for the first time
+
+        last_paid = _parse_date(sub["last_paid_date"], "last_paid_date") if sub.get("last_paid_date") else None
+        if last_paid and last_paid >= period_start:
+            continue  # already paid for the current period
+
+        cursor = conn.execute(
+            "INSERT OR IGNORE INTO notifications_outbox "
+            "(subscription_id, kind, days_before, message, created_at) "
+            "VALUES (?, ?, 0, ?, ?)",
+            (
+                sub["id"], f"payment_due:{today.isoformat()}",
+                _payment_due_message(sub, period_start), created_at,
+            ),
+        )
+        queued += cursor.rowcount
 
     conn.commit()
     return {"checked": len(active), "queued": queued}
