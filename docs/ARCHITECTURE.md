@@ -20,4 +20,4 @@ check-expiry는 활성 구독을 스캔해 종료일 기준 7/3/1/0일 전에는
 
 ## 연동
 
-오케스트레이터는 동일 서버에서 PYTHONPATH로 이 저장소를 참조한다. 공유 SQLite 경로는 PARKING_SUBSCRIPTIONS_DB_PATH. register/list/deactivate/check-expiry는 서브프로세스, 알림 전달은 outbox 모듈 직접 임포트.
+오케스트레이터는 동일 서버에서 PYTHONPATH로 이 저장소를 참조한다. SQLite 경로는 이 저장소가 자체 관리(기본값 `data/parking.db`)하므로 오케스트레이터는 별도로 알 필요 없음 — 재정의가 필요할 때만 PARKING_SUBSCRIPTIONS_DB_PATH를 지정. register/list/deactivate/check-expiry는 서브프로세스, 알림 전달은 outbox 모듈 직접 임포트.

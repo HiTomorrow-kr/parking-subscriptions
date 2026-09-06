@@ -21,7 +21,7 @@ python -m parking_subscriptions check-expiry
 
 `--end-date`를 생략하면 종료일 없이 등록되며, 취소(`deactivate`)하기 전까지 계속 활성 상태로 유지되고 만료 알림 대상에서 제외된다.
 
-모든 명령은 결과를 JSON 한 줄로 stdout에 출력한다: `{"ok": true, "data": ...}` 또는 `{"ok": false, "error": "..."}`, 종료 코드 0/1. 실행 전 `PARKING_SUBSCRIPTIONS_DB_PATH`에 공유 SQLite 파일 경로를 지정한다.
+모든 명령은 결과를 JSON 한 줄로 stdout에 출력한다: `{"ok": true, "data": ...}` 또는 `{"ok": false, "error": "..."}`, 종료 코드 0/1. 데이터는 기본적으로 이 저장소 안의 `data/parking.db`에 저장되며, `PARKING_SUBSCRIPTIONS_DB_PATH`는 이를 재정의할 때만(테스트, 별도 DB가 필요한 배포 등) 지정한다.
 
 ## 연동
 
