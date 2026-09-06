@@ -17,6 +17,7 @@ parking-subscriptions manages monthly parking subscriptions: registration, track
 ```bash
 python -m parking_subscriptions register --plate 12가3456 --start-date 2026-09-01 --end-date 2026-10-01 --room 101 --guest-name 홍길동 --monthly-fee 150000
 python -m parking_subscriptions list --status active
+python -m parking_subscriptions show --room 101
 python -m parking_subscriptions pay --room 101 --date 2026-09-05  # --date defaults to today
 python -m parking_subscriptions deactivate --room 101
 python -m parking_subscriptions check-expiry
@@ -24,6 +25,8 @@ python -m parking_subscriptions check-payments
 ```
 
 Omit `--end-date` to register an open-ended subscription: it stays active and is excluded from expiry checks until explicitly cancelled with `deactivate`.
+
+`show`, `pay`, and `deactivate` accept `--room`, `--plate`, or `--id` interchangeably (exactly one). Room is the recommended identifier: it's a fixed, permanent assignment (one room = one car), so `register` rejects a room that already has an active subscription.
 
 Every command prints a single JSON line to stdout: `{"ok": true, "data": ...}` or `{"ok": false, "error": "..."}`, exit code 0/1. Data lives at `data/parking.db` inside this repo by default; set `PARKING_SUBSCRIPTIONS_DB_PATH` only to override it (e.g. tests, or a deployment that intentionally needs a separate database).
 
@@ -40,4 +43,4 @@ from parking_subscriptions.outbox import fetch_unsent, mark_sent
 
 ## Documentation
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design details.
+- [System Architecture](docs/ARCHITECTURE.md)
