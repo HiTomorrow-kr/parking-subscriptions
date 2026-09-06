@@ -16,7 +16,7 @@ check-expiry는 활성 구독을 스캔해 종료일 기준 7/3/1/0일 전에는
 ## 인터페이스
 
 - CLI(python -m parking_subscriptions): register/list/deactivate/check-expiry, 결과는 JSON 한 줄
-- 라이브러리(parking_subscriptions.outbox): 알림 큐 조회 및 발송 완료 처리
+- 라이브러리(parking_subscriptions.outbox): 알림 큐 원자적 클레임(`claim_unsent`, 조회+발송완료 처리를 한 트랜잭션으로) — 동시 호출자가 있을 수 있는 오케스트레이터는 이걸 써야 중복 발송을 피할 수 있다
 
 ## 연동
 

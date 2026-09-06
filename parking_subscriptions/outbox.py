@@ -35,3 +35,29 @@ def mark_sent(conn: sqlite3.Connection, outbox_id: int) -> None:
         (outbox_id,),
     )
     conn.commit()
+
+
+def claim_unsent(conn: sqlite3.Connection) -> list[dict]:
+    """Atomically claims all pending notifications for delivery.
+
+    Prefer this over separate fetch_unsent()+mark_sent() calls when more
+    than one caller can invoke it concurrently (e.g. an orchestrator's
+    periodic drain job and its manual "check now" action firing at nearly
+    the same moment): flipping sent_at in the same statement that selects
+    the rows means two concurrent callers can't both claim the same row —
+    whichever transaction commits first wins, and the other sees an empty
+    result for that row instead of delivering it twice.
+
+    Args:
+        conn (sqlite3.Connection): Open connection to the shared database.
+
+    Returns:
+        list[dict]: The rows that were pending, oldest first, now marked sent.
+    """
+    rows = conn.execute(
+        "UPDATE notifications_outbox SET sent_at = datetime('now') "
+        "WHERE sent_at IS NULL "
+        "RETURNING id, subscription_id, kind, days_before, message, created_at"
+    ).fetchall()
+    conn.commit()
+    return [dict(row) for row in sorted(rows, key=lambda row: row["id"])]

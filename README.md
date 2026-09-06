@@ -38,8 +38,10 @@ An orchestrator clones this repo on the same host and adds it to `PYTHONPATH`:
 import sys
 sys.path.insert(0, "/path/to/parking-subscription-worker")
 
-from parking_subscriptions.outbox import fetch_unsent, mark_sent
+from parking_subscriptions.outbox import claim_unsent
 ```
+
+`claim_unsent(conn)` atomically fetches pending notifications and marks them sent in one statement — use this instead of separate `fetch_unsent()`/`mark_sent()` calls whenever more than one caller (a periodic job and a manual "check now" action, say) might drain the outbox concurrently, so the same notification can't be delivered twice.
 
 ## Documentation
 
