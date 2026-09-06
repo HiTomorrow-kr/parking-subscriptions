@@ -28,6 +28,13 @@ CREATE TABLE IF NOT EXISTS notifications_outbox (
     sent_at TEXT,
     UNIQUE(subscription_id, kind, days_before)
 );
+
+-- One active subscription per room, enforced at the DB level (not just in
+-- register()'s pre-check) so two concurrent registrations can't both slip
+-- past a SELECT-then-INSERT race. NULLs (no room assigned) are exempt —
+-- SQLite treats each NULL as distinct, so any number of roomless rows coexist.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_subscription_per_room
+    ON subscriptions(room) WHERE status = 'active';
 """
 
 

@@ -7,9 +7,9 @@ parking-subscriptions manages monthly parking subscriptions: registration, track
 ## Key Features
 
 - Register, list, and cancel monthly parking subscriptions, backed by SQLite
-- Payment tracking: record a payment date per subscription; `list` reports whether the current calendar month is paid
+- Payment tracking: record a payment date per subscription; `list` reports whether it's currently paid up
 - Automatic expiry scanning (7/3/1/0 days before, and past-due) with duplicate-safe notification queueing
-- Automatic payment-due reminders: billing is anchored to each subscription's own contract-date anniversary (not the calendar month); once due, an unpaid subscription is re-flagged once per day until paid
+- Automatic payment-due reminders: each payment covers exactly one month forward from when it was made (paying a few days early still counts for the upcoming period); once a due date is missed, exactly one reminder is queued for it — not a fresh one every day — until a payment is recorded
 - No install step — works via PYTHONPATH on any host with Python 3.11+
 
 ## Usage

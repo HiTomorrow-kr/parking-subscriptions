@@ -44,23 +44,27 @@ def register(
         dict: The newly created subscription record.
 
     Raises:
-        ValueError: If dates are malformed, end_date is not after start_date,
-            or room already has an active subscription (one car per room —
-            room is a fixed, permanent assignment for monthly parking).
+        ValueError: If plate_number or room is missing, dates are malformed,
+            end_date is not after start_date, or room already has an active
+            subscription (one car per room — room is a fixed, permanent
+            assignment for monthly parking, and the only way callers can
+            look a subscription up again for pay/deactivate/show).
     """
     plate_number = (plate_number or "").strip()
     if not plate_number:
         raise ValueError("plate_number is required")
 
-    room = (room or "").strip() or None
-    if room is not None:
-        existing = conn.execute(
-            "SELECT plate_number FROM subscriptions WHERE room = ? AND status = 'active'", (room,)
-        ).fetchone()
-        if existing:
-            raise ValueError(
-                f"Room {room!r} already has an active subscription ({existing['plate_number']})"
-            )
+    room = (room or "").strip()
+    if not room:
+        raise ValueError("room is required")
+
+    existing = conn.execute(
+        "SELECT plate_number FROM subscriptions WHERE room = ? AND status = 'active'", (room,)
+    ).fetchone()
+    if existing:
+        raise ValueError(
+            f"Room {room!r} already has an active subscription ({existing['plate_number']})"
+        )
 
     start = _parse_date(start_date, "start_date")
     end_iso = None
@@ -71,22 +75,28 @@ def register(
         end_iso = end.isoformat()
 
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cursor = conn.execute(
-        "INSERT INTO subscriptions "
-        "(plate_number, room, guest_name, start_date, end_date, monthly_fee, "
-        " status, created_by, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)",
-        (
-            plate_number,
-            room,
-            guest_name,
-            start.isoformat(),
-            end_iso,
-            monthly_fee,
-            created_by,
-            created_at,
-        ),
-    )
+    try:
+        cursor = conn.execute(
+            "INSERT INTO subscriptions "
+            "(plate_number, room, guest_name, start_date, end_date, monthly_fee, "
+            " status, created_by, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)",
+            (
+                plate_number,
+                room,
+                guest_name,
+                start.isoformat(),
+                end_iso,
+                monthly_fee,
+                created_by,
+                created_at,
+            ),
+        )
+    except sqlite3.IntegrityError:
+        # The pre-check above is a fast path for the common case; this is
+        # the actual guard against two concurrent registrations racing past
+        # that check for the same room (see idx_one_active_subscription_per_room).
+        raise ValueError(f"Room {room!r} already has an active subscription")
     conn.commit()
     return get(conn, cursor.lastrowid)
 
@@ -152,15 +162,40 @@ def get_with_status(conn: sqlite3.Connection, subscription_id: int, today: date 
     deactivate/mark_paid where the extra field isn't relevant).
     """
     sub = get(conn, subscription_id)
-    sub["paid_current_month"] = _paid_current_month(sub.get("last_paid_date"), today or date.today())
+    sub["paid_current_month"] = _is_paid_up(sub, today or date.today())
     return sub
 
 
-def _paid_current_month(last_paid_date: str | None, today: date) -> bool:
-    if not last_paid_date:
-        return False
-    paid = _parse_date(last_paid_date, "last_paid_date")
-    return (paid.year, paid.month) == (today.year, today.month)
+def _add_one_month(d: date) -> date:
+    month, year = d.month + 1, d.year
+    if month > 12:
+        month, year = 1, year + 1
+    return date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
+
+
+def _next_due_date(sub: dict) -> date:
+    """The date by which a fresh payment is required to stay paid up.
+
+    A payment covers exactly one month forward from whenever it was made
+    (rolling from the payment date, not a fixed calendar-month or a fixed
+    contract-date grid) — so paying a few days before the due date counts
+    as paying for the upcoming period, not "late for" the closing one.
+    Before any payment is ever recorded, the subscription is due from its
+    own start_date.
+    """
+    if not sub.get("last_paid_date"):
+        return _parse_date(sub["start_date"], "start_date")
+    return _add_one_month(_parse_date(sub["last_paid_date"], "last_paid_date"))
+
+
+def _is_paid_up(sub: dict, today: date) -> bool:
+    """Whether `sub` is paid up as of `today` (see _next_due_date).
+
+    Used by both list/show and check_payments, so the two always agree:
+    a subscription reported as paid here will never also get a
+    payment_due reminder, and vice versa.
+    """
+    return today < _next_due_date(sub)
 
 
 def list_subscriptions(
@@ -178,11 +213,19 @@ def list_subscriptions(
             (numerically; rooms are a fixed per-subscription assignment, so
             this is the natural sort for a human scanning the list), with
             subscriptions that have no room listed last. Each record
-            includes a computed "paid_current_month" bool: whether
-            last_paid_date falls in the current calendar month.
+            includes a computed "paid_current_month" bool: whether the
+            subscription is paid up through its next rolling due date (see
+            _is_paid_up / _next_due_date) — not the calendar month.
     """
     today = today or date.today()
-    order_by = "ORDER BY room IS NULL, CAST(room AS INTEGER), room"
+    # Purely-numeric rooms sort numerically; anything else (should not
+    # normally happen, but room is free-text) sorts after them, alphabetically,
+    # instead of silently collapsing to 0 under CAST(room AS INTEGER).
+    order_by = (
+        "ORDER BY room IS NULL, "
+        "CASE WHEN room GLOB '[0-9]*' AND room NOT GLOB '*[^0-9]*' THEN 0 ELSE 1 END, "
+        "CAST(room AS INTEGER), room"
+    )
     if status:
         rows = conn.execute(
             f"SELECT * FROM subscriptions WHERE status = ? {order_by}", (status,)
@@ -192,7 +235,7 @@ def list_subscriptions(
 
     result = [dict(row) for row in rows]
     for r in result:
-        r["paid_current_month"] = _paid_current_month(r.get("last_paid_date"), today)
+        r["paid_current_month"] = _is_paid_up(r, today)
     return result
 
 
@@ -233,6 +276,23 @@ def deactivate(conn: sqlite3.Connection, subscription_id: int) -> dict:
     )
     conn.commit()
     return get(conn, subscription_id)
+
+
+def _queue_notification(
+    conn: sqlite3.Connection, subscription_id: int, kind: str, days_before: int, message: str, created_at: str
+) -> int:
+    """Queues an outbox row, ignoring a duplicate (subscription, kind, days_before).
+
+    Returns:
+        int: 1 if a new row was queued, 0 if it was already there.
+    """
+    cursor = conn.execute(
+        "INSERT OR IGNORE INTO notifications_outbox "
+        "(subscription_id, kind, days_before, message, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (subscription_id, kind, days_before, message, created_at),
+    )
+    return cursor.rowcount
 
 
 def _expiry_soon_message(sub: dict, days_left: int) -> str:
@@ -279,64 +339,36 @@ def check_expiry(conn: sqlite3.Connection, today: date | None = None) -> dict:
         days_left = (end - today).days
 
         if days_left in EXPIRY_THRESHOLDS:
-            cursor = conn.execute(
-                "INSERT OR IGNORE INTO notifications_outbox "
-                "(subscription_id, kind, days_before, message, created_at) "
-                "VALUES (?, 'expiry_soon', ?, ?, ?)",
-                (sub["id"], days_left, _expiry_soon_message(sub, days_left), created_at),
+            queued += _queue_notification(
+                conn, sub["id"], "expiry_soon", days_left, _expiry_soon_message(sub, days_left), created_at
             )
-            queued += cursor.rowcount
 
         if days_left < 0:
             conn.execute(
                 "UPDATE subscriptions SET status = 'expired' WHERE id = ?", (sub["id"],)
             )
-            cursor = conn.execute(
-                "INSERT OR IGNORE INTO notifications_outbox "
-                "(subscription_id, kind, days_before, message, created_at) "
-                "VALUES (?, 'expired', 0, ?, ?)",
-                (sub["id"], _expired_message(sub), created_at),
-            )
-            queued += cursor.rowcount
+            queued += _queue_notification(conn, sub["id"], "expired", 0, _expired_message(sub), created_at)
 
     conn.commit()
     return {"checked": len(active), "queued": queued}
 
 
-def _current_period_start(start: date, today: date) -> date:
-    """The most recent monthly billing due date on or before `today`.
-
-    The due date is the contract's own anniversary — the day-of-month of
-    `start` — not the calendar month, since billing runs on the contract
-    date (e.g. a subscription started on the 12th is due on the 12th of
-    every month). Clamped to the last day of a shorter month.
-    """
-    day = start.day
-    year, month = today.year, today.month
-    candidate = date(year, month, min(day, calendar.monthrange(year, month)[1]))
-    if candidate > today:
-        month -= 1
-        if month == 0:
-            month, year = 12, year - 1
-        candidate = date(year, month, min(day, calendar.monthrange(year, month)[1]))
-    return candidate
-
-
-def _payment_due_message(sub: dict, period_start: date) -> str:
+def _payment_due_message(sub: dict, due_date: date) -> str:
     label = f"{sub['room']}호 " if sub.get("room") else ""
     return (
         f"[정기 주차 미납] {label}{sub['plate_number']} 정기 주차 결제가 필요합니다 "
-        f"(이번 결제일: {period_start.isoformat()})."
+        f"(결제일: {due_date.isoformat()})."
     )
 
 
 def check_payments(conn: sqlite3.Connection, today: date | None = None) -> dict:
-    """Scans active subscriptions and queues a reminder for anyone unpaid past their due date.
+    """Scans active subscriptions and queues one reminder per missed due date.
 
-    Billing is anchored to each subscription's own contract-date anniversary
-    (see _current_period_start), not the calendar month. Once due, an unpaid
-    subscription is re-flagged once per day until a payment is recorded for
-    the current period.
+    See _next_due_date for how the due date rolls forward from the last
+    payment. Keying the outbox row on the due date itself (rather than
+    today's date) means a still-unpaid subscription gets exactly one
+    reminder for that due date — not a fresh one every day — and a new
+    reminder only appears once a *later* due date is also missed.
 
     Args:
         conn: Open database connection.
@@ -351,25 +383,14 @@ def check_payments(conn: sqlite3.Connection, today: date | None = None) -> dict:
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     for sub in active:
-        start = _parse_date(sub["start_date"], "start_date")
-        period_start = _current_period_start(start, today)
-        if period_start < start:
-            continue  # not yet due for the first time
+        if sub["paid_current_month"]:
+            continue
 
-        last_paid = _parse_date(sub["last_paid_date"], "last_paid_date") if sub.get("last_paid_date") else None
-        if last_paid and last_paid >= period_start:
-            continue  # already paid for the current period
-
-        cursor = conn.execute(
-            "INSERT OR IGNORE INTO notifications_outbox "
-            "(subscription_id, kind, days_before, message, created_at) "
-            "VALUES (?, ?, 0, ?, ?)",
-            (
-                sub["id"], f"payment_due:{today.isoformat()}",
-                _payment_due_message(sub, period_start), created_at,
-            ),
+        due_date = _next_due_date(sub)
+        queued += _queue_notification(
+            conn, sub["id"], f"payment_due:{due_date.isoformat()}", 0,
+            _payment_due_message(sub, due_date), created_at,
         )
-        queued += cursor.rowcount
 
     conn.commit()
     return {"checked": len(active), "queued": queued}

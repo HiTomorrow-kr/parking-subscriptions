@@ -42,9 +42,9 @@ def _cmd_list(args: argparse.Namespace) -> int:
 
 def _resolve_id(conn, args: argparse.Namespace) -> int:
     """Resolves --id/--plate/--room (mutually exclusive) to a subscription id."""
-    if args.room:
+    if args.room is not None:
         return subscriptions.find_active_by_room(conn, args.room)["id"]
-    if args.plate:
+    if args.plate is not None:
         return subscriptions.find_active_by_plate(conn, args.plate)["id"]
     return args.id
 
@@ -104,7 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_register.add_argument("--plate", required=True)
     p_register.add_argument("--start-date", required=True, help="YYYY-MM-DD")
     p_register.add_argument("--end-date", help="YYYY-MM-DD (omit for an open-ended subscription)")
-    p_register.add_argument("--room")
+    p_register.add_argument("--room", required=True)
     p_register.add_argument("--guest-name")
     p_register.add_argument("--monthly-fee", type=int)
     p_register.add_argument("--created-by")
@@ -148,12 +148,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    try:
-        return args.func(args)
-    except RuntimeError as e:
-        # e.g. PARKING_SUBSCRIPTIONS_DB_PATH missing
-        _print_err(str(e))
-        return 1
+    return args.func(args)
 
 
 if __name__ == "__main__":
