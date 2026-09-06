@@ -1,0 +1,37 @@
+import sqlite3
+
+# --- Section: Outbox Access ---
+# Pure I/O helpers with no business logic (no expiry math, no message
+# composition) — safe for an orchestrator to import directly instead of
+# going through the CLI, since delivery (who/how to notify) is the
+# orchestrator's job, not this program's.
+
+
+def fetch_unsent(conn: sqlite3.Connection) -> list[dict]:
+    """Retrieves all notifications that have not yet been delivered.
+
+    Args:
+        conn (sqlite3.Connection): Open connection to the shared database.
+
+    Returns:
+        list[dict]: Pending outbox rows, oldest first.
+    """
+    rows = conn.execute(
+        "SELECT id, subscription_id, kind, days_before, message, created_at "
+        "FROM notifications_outbox WHERE sent_at IS NULL ORDER BY id ASC"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def mark_sent(conn: sqlite3.Connection, outbox_id: int) -> None:
+    """Marks a notification as delivered.
+
+    Args:
+        conn (sqlite3.Connection): Open connection to the shared database.
+        outbox_id (int): Primary key of the notifications_outbox row.
+    """
+    conn.execute(
+        "UPDATE notifications_outbox SET sent_at = datetime('now') WHERE id = ?",
+        (outbox_id,),
+    )
+    conn.commit()
