@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     room TEXT,
     guest_name TEXT,
     start_date TEXT NOT NULL,
-    end_date TEXT NOT NULL,
+    end_date TEXT,
     monthly_fee INTEGER,
     status TEXT NOT NULL DEFAULT 'active',
     created_by TEXT,

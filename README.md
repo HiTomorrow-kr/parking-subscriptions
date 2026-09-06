@@ -19,6 +19,8 @@ python -m parking_subscriptions deactivate --id 3
 python -m parking_subscriptions check-expiry
 ```
 
+Omit `--end-date` to register an open-ended subscription: it stays active and is excluded from expiry checks until explicitly cancelled with `deactivate`.
+
 Every command prints a single JSON line to stdout: `{"ok": true, "data": ...}` or `{"ok": false, "error": "..."}`, exit code 0/1. Set `PARKING_SUBSCRIPTIONS_DB_PATH` to the shared SQLite file path before running any command.
 
 ## Integration

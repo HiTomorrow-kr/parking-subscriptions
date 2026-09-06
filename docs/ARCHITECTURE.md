@@ -6,7 +6,7 @@ parking-subscriptions는 정기(월) 주차권의 등록, 조회, 취소, 만료
 
 ## 데이터 모델
 
-- subscriptions: 차량번호, 방/투숙객, 시작일/종료일, 요금, 상태(active/expired/cancelled)
+- subscriptions: 차량번호, 방/투숙객, 시작일/종료일(선택, 없으면 취소 전까지 계속 갱신되는 무기한 구독), 요금, 상태(active/expired/cancelled)
 - notifications_outbox: 만료 알림 큐. UNIQUE(subscription_id, kind, days_before)로 중복 방지
 
 ## 만료 판정 로직

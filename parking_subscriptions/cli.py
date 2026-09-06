@@ -65,7 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_register = sub.add_parser("register", help="Register a new monthly parking subscription")
     p_register.add_argument("--plate", required=True)
     p_register.add_argument("--start-date", required=True, help="YYYY-MM-DD")
-    p_register.add_argument("--end-date", required=True, help="YYYY-MM-DD")
+    p_register.add_argument("--end-date", help="YYYY-MM-DD (omit for an open-ended subscription)")
     p_register.add_argument("--room")
     p_register.add_argument("--guest-name")
     p_register.add_argument("--monthly-fee", type=int)

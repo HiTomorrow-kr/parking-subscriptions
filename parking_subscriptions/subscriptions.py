@@ -20,7 +20,7 @@ def register(
     conn: sqlite3.Connection,
     plate_number: str,
     start_date: str,
-    end_date: str,
+    end_date: str | None = None,
     room: str | None = None,
     guest_name: str | None = None,
     monthly_fee: int | None = None,
@@ -32,7 +32,8 @@ def register(
         conn: Open database connection.
         plate_number: Vehicle plate number.
         start_date: Subscription start date (YYYY-MM-DD).
-        end_date: Subscription end date (YYYY-MM-DD).
+        end_date: Subscription end date (YYYY-MM-DD), or None for an
+            open-ended subscription that renews until explicitly cancelled.
         room: Optional room/guest identifier.
         guest_name: Optional guest name.
         monthly_fee: Optional monthly fee amount.
@@ -49,9 +50,12 @@ def register(
         raise ValueError("plate_number is required")
 
     start = _parse_date(start_date, "start_date")
-    end = _parse_date(end_date, "end_date")
-    if end <= start:
-        raise ValueError("end_date must be after start_date")
+    end_iso = None
+    if end_date is not None:
+        end = _parse_date(end_date, "end_date")
+        if end <= start:
+            raise ValueError("end_date must be after start_date")
+        end_iso = end.isoformat()
 
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor = conn.execute(
@@ -64,7 +68,7 @@ def register(
             room,
             guest_name,
             start.isoformat(),
-            end.isoformat(),
+            end_iso,
             monthly_fee,
             created_by,
             created_at,
@@ -159,6 +163,9 @@ def check_expiry(conn: sqlite3.Connection, today: date | None = None) -> dict:
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     for sub in active:
+        if sub["end_date"] is None:
+            continue  # open-ended subscription: renews until cancelled
+
         end = _parse_date(sub["end_date"], "end_date")
         days_left = (end - today).days
 
