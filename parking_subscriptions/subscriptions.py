@@ -145,6 +145,17 @@ def get(conn: sqlite3.Connection, subscription_id: int) -> dict:
     return dict(row)
 
 
+def get_with_status(conn: sqlite3.Connection, subscription_id: int, today: date | None = None) -> dict:
+    """Fetches a subscription with its computed paid_current_month status.
+
+    For a detail view (as opposed to `get`, used internally by
+    deactivate/mark_paid where the extra field isn't relevant).
+    """
+    sub = get(conn, subscription_id)
+    sub["paid_current_month"] = _paid_current_month(sub.get("last_paid_date"), today or date.today())
+    return sub
+
+
 def _paid_current_month(last_paid_date: str | None, today: date) -> bool:
     if not last_paid_date:
         return False

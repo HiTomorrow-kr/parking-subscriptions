@@ -71,6 +71,17 @@ def _cmd_pay(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_show(args: argparse.Namespace) -> int:
+    conn = db.connect()
+    try:
+        sub = subscriptions.get_with_status(conn, _resolve_id(conn, args))
+    except ValueError as e:
+        _print_err(str(e))
+        return 1
+    _print_ok(sub)
+    return 0
+
+
 def _cmd_check_expiry(args: argparse.Namespace) -> int:
     conn = db.connect()
     result = subscriptions.check_expiry(conn)
@@ -117,6 +128,13 @@ def build_parser() -> argparse.ArgumentParser:
     g_pay.add_argument("--room")
     p_pay.add_argument("--date", help="YYYY-MM-DD (defaults to today)")
     p_pay.set_defaults(func=_cmd_pay)
+
+    p_show = sub.add_parser("show", help="Show full details for a subscription")
+    g_show = p_show.add_mutually_exclusive_group(required=True)
+    g_show.add_argument("--id", type=int)
+    g_show.add_argument("--plate")
+    g_show.add_argument("--room")
+    p_show.set_defaults(func=_cmd_show)
 
     p_check = sub.add_parser("check-expiry", help="Scan subscriptions and queue expiry notifications")
     p_check.set_defaults(func=_cmd_check_expiry)
