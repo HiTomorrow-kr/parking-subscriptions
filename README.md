@@ -43,6 +43,16 @@ from parking_subscriptions.outbox import claim_unsent
 
 `claim_unsent(conn)` atomically fetches pending notifications and marks them sent in one statement — use this instead of separate `fetch_unsent()`/`mark_sent()` calls whenever more than one caller (a periodic job and a manual "check now" action, say) might drain the outbox concurrently, so the same notification can't be delivered twice.
 
+## Testing
+
+```bash
+python -m pytest
+```
+
 ## Documentation
 
 - [System Architecture](docs/ARCHITECTURE.md)
+
+## License
+
+MIT — see [LICENSE](LICENSE).

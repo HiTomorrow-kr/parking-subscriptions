@@ -1,23 +1,27 @@
-# 아키텍처 (Architecture)
+# Architecture
 
-## 프로그램 개요
+[한국어](architecture-ko.md) | English
 
-parking-subscriptions는 정기(월) 주차권의 등록, 조회, 취소, 만료 감지를 처리하는 독립 프로그램이다. 텔레그램/디스코드 등 메시징 플랫폼과 무관하며, CLI와 라이브러리 인터페이스로 여러 오케스트레이터가 구동한다.
+## Overview
 
-## 데이터 모델
+parking-subscriptions is a standalone program that manages monthly parking subscriptions: registration, lookup, payment tracking, cancellation, and expiry/payment-due notifications. It has no dependency on any messaging platform (Telegram, Discord, etc.) — any orchestrator can drive it through its CLI or import it as a library.
 
-- subscriptions: 차량번호, 방/투숙객, 시작일/종료일(선택, 없으면 취소 전까지 계속 갱신되는 무기한 구독), 요금, 상태(active/expired/cancelled)
-- notifications_outbox: 만료 알림 큐. UNIQUE(subscription_id, kind, days_before)로 중복 방지
+## Data Model
 
-## 만료 판정 로직
+- `subscriptions` — plate number, room, guest name, start/end date (end date is optional; omitting it makes the subscription open-ended, renewing until explicitly cancelled), monthly fee, status (`active`/`expired`/`cancelled`), `created_by`, `last_paid_date`. A partial unique index enforces one active subscription per room; rooms with no assignment (`NULL`) are exempt.
+- `notifications_outbox` — queued notifications awaiting delivery. `UNIQUE(subscription_id, kind, days_before)` keeps the same notification from being queued twice.
 
-check-expiry는 활성 구독을 스캔해 종료일 기준 7/3/1/0일 전에는 임박 알림을, 종료일 경과 시 만료 알림과 상태 전환(expired)을 큐에 적재한다.
+## Business Logic
 
-## 인터페이스
+- **Expiry (`check-expiry`)** — scans active subscriptions and queues an upcoming-expiry notification at 7/3/1/0 days before the end date; once the end date has passed, it queues an expired notification and flips the subscription's status to `expired`. Open-ended subscriptions (no end date) are skipped.
+- **Payment tracking (`pay`, `check-payments`)** — each recorded payment covers exactly one month forward from the date it was made, not a fixed calendar month or a fixed contract-date grid, so paying a few days early still counts toward the upcoming period. `check-payments` scans active subscriptions and queues one payment-due reminder per missed due date; the outbox row is keyed on the due date itself, so a still-unpaid subscription gets exactly one reminder for that date rather than a fresh one every day.
+- **Lookup** — `show`, `pay`, and `deactivate` resolve a subscription via `--room`, `--plate`, or `--id` (exactly one). Room is the recommended identifier: it's a fixed, permanent assignment, so it round-trips cleanly through `register` → lookup → `deactivate`. Plate lookup can raise an ambiguity error if more than one active subscription shares a plate — only rooms are constrained to uniqueness at the database level.
 
-- CLI(python -m parking_subscriptions): register/list/deactivate/check-expiry, 결과는 JSON 한 줄
-- 라이브러리(parking_subscriptions.outbox): 알림 큐 원자적 클레임(`claim_unsent`, 조회+발송완료 처리를 한 트랜잭션으로) — 동시 호출자가 있을 수 있는 오케스트레이터는 이걸 써야 중복 발송을 피할 수 있다
+## Interface
 
-## 연동
+- **CLI** (`python -m parking_subscriptions`) — `register`, `list`, `show`, `pay`, `deactivate`, `check-expiry`, `check-payments`. Every command prints a single JSON line to stdout, `{"ok": true, "data": ...}` or `{"ok": false, "error": "..."}`, with exit code 0/1.
+- **Library** (`parking_subscriptions.outbox`) — atomic notification-queue claiming (`claim_unsent`, fetch and mark-sent in a single transaction). An orchestrator with potentially concurrent callers (a periodic drain job and a manual "check now" action, say) must use this instead of separate `fetch_unsent()`/`mark_sent()` calls to avoid delivering the same notification twice.
 
-오케스트레이터는 동일 서버에서 PYTHONPATH로 이 저장소를 참조한다. SQLite 경로는 이 저장소가 자체 관리(기본값 `data/parking.db`)하므로 오케스트레이터는 별도로 알 필요 없음 — 재정의가 필요할 때만 PARKING_SUBSCRIPTIONS_DB_PATH를 지정. register/list/deactivate/check-expiry는 서브프로세스, 알림 전달은 outbox 모듈 직접 임포트.
+## Integration
+
+An orchestrator references this repository via `PYTHONPATH` on the same host — no install step required. The SQLite path is managed by this repository itself, defaulting to `data/parking.db`, so the orchestrator doesn't need to know about it; set `PARKING_SUBSCRIPTIONS_DB_PATH` only when an override is genuinely needed (tests, or a deployment that intentionally needs a separate database). `register`/`list`/`deactivate`/`check-expiry`/`check-payments` run as a subprocess; notification delivery imports the `outbox` module directly.

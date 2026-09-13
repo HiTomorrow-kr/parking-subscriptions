@@ -43,6 +43,16 @@ from parking_subscriptions.outbox import claim_unsent
 
 `claim_unsent(conn)`은 대기 중인 알림 조회와 발송완료 처리를 한 문장으로 원자적으로 실행한다 — 주기 작업과 수동 "지금 확인" 액션처럼 두 호출자가 동시에 큐를 비울 수 있는 상황이라면, 별도의 `fetch_unsent()`/`mark_sent()` 호출 대신 이걸 써야 같은 알림이 두 번 발송되지 않는다.
 
+## 테스트
+
+```bash
+python -m pytest
+```
+
 ## 문서
 
-- [시스템 아키텍처](ARCHITECTURE.md)
+- [시스템 아키텍처](architecture-ko.md)
+
+## 라이선스
+
+MIT — [LICENSE](../LICENSE) 참고.
