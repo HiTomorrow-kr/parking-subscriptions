@@ -1,6 +1,6 @@
 import calendar
 import sqlite3
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 
 # --- Section: Domain Logic ---
 # All business rules for monthly parking subscriptions live here. This
@@ -74,7 +74,7 @@ def register(
             raise ValueError("end_date must be after start_date")
         end_iso = end.isoformat()
 
-    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    created_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     try:
         cursor = conn.execute(
             "INSERT INTO subscriptions "
@@ -329,7 +329,7 @@ def check_expiry(conn: sqlite3.Connection, today: date | None = None) -> dict:
     today = today or date.today()
     active = list_subscriptions(conn, status="active")
     queued = 0
-    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    created_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     for sub in active:
         if sub["end_date"] is None:
@@ -380,7 +380,7 @@ def check_payments(conn: sqlite3.Connection, today: date | None = None) -> dict:
     today = today or date.today()
     active = list_subscriptions(conn, status="active")
     queued = 0
-    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    created_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     for sub in active:
         if sub["paid_current_month"]:
