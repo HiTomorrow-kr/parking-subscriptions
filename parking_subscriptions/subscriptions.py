@@ -378,7 +378,7 @@ def check_payments(conn: sqlite3.Connection, today: date | None = None) -> dict:
         dict: {"checked": <active subscriptions scanned>, "queued": <notifications queued>}
     """
     today = today or date.today()
-    active = list_subscriptions(conn, status="active")
+    active = list_subscriptions(conn, status="active", today=today)
     queued = 0
     created_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
