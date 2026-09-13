@@ -37,6 +37,27 @@ def mark_sent(conn: sqlite3.Connection, outbox_id: int) -> None:
     conn.commit()
 
 
+def prune_sent(conn: sqlite3.Connection, older_than_days: int = 30) -> int:
+    """Deletes delivered notifications older than a retention window.
+
+    The outbox otherwise grows forever — nothing else ever removes a row.
+    Pending (unsent) notifications are never touched, regardless of age.
+
+    Args:
+        conn (sqlite3.Connection): Open connection to the shared database.
+        older_than_days (int): Retention window in days.
+
+    Returns:
+        int: Number of rows deleted.
+    """
+    cursor = conn.execute(
+        "DELETE FROM notifications_outbox WHERE sent_at IS NOT NULL AND sent_at < datetime('now', ?)",
+        (f"-{older_than_days} days",),
+    )
+    conn.commit()
+    return cursor.rowcount
+
+
 def claim_unsent(conn: sqlite3.Connection) -> list[dict]:
     """Atomically claims all pending notifications for delivery.
 

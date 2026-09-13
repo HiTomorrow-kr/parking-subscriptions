@@ -30,3 +30,24 @@ def test_claim_unsent_marks_rows_sent_and_is_idempotent(conn):
     # A second, concurrent-style drain must not redeliver the same row.
     assert outbox.claim_unsent(conn) == []
     assert outbox.fetch_unsent(conn) == []
+
+
+def test_prune_sent_deletes_only_old_delivered_rows(conn):
+    _queue_one_notification(conn)
+    [row] = outbox.fetch_unsent(conn)
+    outbox.mark_sent(conn, row["id"])
+    conn.execute(
+        "UPDATE notifications_outbox SET sent_at = datetime('now', '-40 days') WHERE id = ?", (row["id"],)
+    )
+    conn.commit()
+
+    deleted = outbox.prune_sent(conn, older_than_days=30)
+    assert deleted == 1
+    assert conn.execute("SELECT COUNT(*) FROM notifications_outbox").fetchone()[0] == 0
+
+
+def test_prune_sent_keeps_recent_and_pending_rows(conn):
+    _queue_one_notification(conn)  # stays pending (unsent), regardless of age
+    result = outbox.prune_sent(conn, older_than_days=30)
+    assert result == 0
+    assert len(outbox.fetch_unsent(conn)) == 1

@@ -2,7 +2,7 @@ import argparse
 import json
 import sys
 
-from . import db, subscriptions
+from . import db, outbox, subscriptions
 
 
 def _print_ok(data) -> None:
@@ -71,6 +71,23 @@ def _cmd_pay(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_update(args: argparse.Namespace) -> int:
+    conn = db.connect()
+    try:
+        sub = subscriptions.update(
+            conn,
+            _resolve_id(conn, args),
+            end_date=args.end_date,
+            guest_name=args.guest_name,
+            monthly_fee=args.monthly_fee,
+        )
+    except ValueError as e:
+        _print_err(str(e))
+        return 1
+    _print_ok(sub)
+    return 0
+
+
 def _cmd_show(args: argparse.Namespace) -> int:
     conn = db.connect()
     try:
@@ -93,6 +110,13 @@ def _cmd_check_payments(args: argparse.Namespace) -> int:
     conn = db.connect()
     result = subscriptions.check_payments(conn)
     _print_ok(result)
+    return 0
+
+
+def _cmd_prune_outbox(args: argparse.Namespace) -> int:
+    conn = db.connect()
+    deleted = outbox.prune_sent(conn, older_than_days=args.older_than_days)
+    _print_ok({"deleted": deleted})
     return 0
 
 
@@ -129,6 +153,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_pay.add_argument("--date", help="YYYY-MM-DD (defaults to today)")
     p_pay.set_defaults(func=_cmd_pay)
 
+    p_update = sub.add_parser(
+        "update", help="Update a subscription's end date, guest name, or fee without resetting payment history"
+    )
+    g_update = p_update.add_mutually_exclusive_group(required=True)
+    g_update.add_argument("--id", type=int)
+    g_update.add_argument("--plate")
+    g_update.add_argument("--room")
+    p_update.add_argument("--end-date", help="YYYY-MM-DD")
+    p_update.add_argument("--guest-name")
+    p_update.add_argument("--monthly-fee", type=int)
+    p_update.set_defaults(func=_cmd_update)
+
     p_show = sub.add_parser("show", help="Show full details for a subscription")
     g_show = p_show.add_mutually_exclusive_group(required=True)
     g_show.add_argument("--id", type=int)
@@ -141,6 +177,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_check_pay = sub.add_parser("check-payments", help="Scan subscriptions and queue payment-due reminders")
     p_check_pay.set_defaults(func=_cmd_check_payments)
+
+    p_prune = sub.add_parser("prune-outbox", help="Delete delivered notifications older than the retention window")
+    p_prune.add_argument("--older-than-days", type=int, default=30)
+    p_prune.set_defaults(func=_cmd_prune_outbox)
 
     return parser
 

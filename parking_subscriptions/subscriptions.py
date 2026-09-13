@@ -263,6 +263,56 @@ def mark_paid(conn: sqlite3.Connection, subscription_id: int, paid_date: str | N
     return get(conn, subscription_id)
 
 
+def update(
+    conn: sqlite3.Connection,
+    subscription_id: int,
+    end_date: str | None = None,
+    guest_name: str | None = None,
+    monthly_fee: int | None = None,
+) -> dict:
+    """Updates mutable fields of an existing subscription in place.
+
+    Unlike deactivate()+register(), this never touches last_paid_date or
+    status, so correcting a typo or extending a subscription doesn't reset
+    its payment history.
+
+    Args:
+        conn: Open database connection.
+        subscription_id: The subscription to update.
+        end_date: New end date (YYYY-MM-DD), or None to leave unchanged.
+        guest_name: New guest name, or None to leave unchanged.
+        monthly_fee: New monthly fee, or None to leave unchanged.
+
+    Returns:
+        dict: The updated subscription record.
+
+    Raises:
+        ValueError: If no subscription exists with that id, no field was
+            given to update, or end_date is malformed or not after the
+            subscription's start_date.
+    """
+    sub = get(conn, subscription_id)  # raises if missing
+
+    if end_date is None and guest_name is None and monthly_fee is None:
+        raise ValueError("Nothing to update: pass end_date, guest_name, and/or monthly_fee")
+
+    if end_date is not None:
+        start = _parse_date(sub["start_date"], "start_date")
+        end = _parse_date(end_date, "end_date")
+        if end <= start:
+            raise ValueError("end_date must be after start_date")
+        conn.execute("UPDATE subscriptions SET end_date = ? WHERE id = ?", (end.isoformat(), subscription_id))
+
+    if guest_name is not None:
+        conn.execute("UPDATE subscriptions SET guest_name = ? WHERE id = ?", (guest_name, subscription_id))
+
+    if monthly_fee is not None:
+        conn.execute("UPDATE subscriptions SET monthly_fee = ? WHERE id = ?", (monthly_fee, subscription_id))
+
+    conn.commit()
+    return get(conn, subscription_id)
+
+
 def deactivate(conn: sqlite3.Connection, subscription_id: int) -> dict:
     """Cancels a subscription so it no longer triggers expiry checks.
 

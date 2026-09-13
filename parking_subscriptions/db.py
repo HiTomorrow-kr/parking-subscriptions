@@ -50,6 +50,11 @@ def connect() -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    # A cron-driven check-expiry/check-payments run and an orchestrator's
+    # outbox drain can land on the DB at nearly the same moment; without a
+    # busy timeout, whichever one loses the race gets an immediate
+    # "database is locked" error instead of just waiting its turn.
+    conn.execute("PRAGMA busy_timeout = 5000")
     conn.executescript(SCHEMA)
     _migrate(conn)
     return conn
