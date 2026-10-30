@@ -2,16 +2,21 @@
 
 [한국어](docs/readme-ko.md) | English
 
-parking-subscriptions manages monthly parking subscriptions: registration, tracking, and expiry notifications. It is a standalone program with no messaging-platform dependency, so any bot (Telegram, Discord, ...) can drive it as a subprocess or library.
+parking-subscriptions keeps track of monthly parking subscriptions: registration, payments and expiry.
 
 ## Key Features
 
-- Register, list, and cancel monthly parking subscriptions, backed by SQLite
-- Payment tracking: record a payment date per subscription; `list` reports whether it's currently paid up
-- Automatic expiry scanning (7/3/1/0 days before, and past-due) with duplicate-safe notification queueing
-- Automatic payment-due reminders: each payment covers exactly one month forward from when it was made (paying a few days early still counts for the upcoming period); once a due date is missed, exactly one reminder is queued for it — not a fresh one every day — until a payment is recorded
-- Update a subscription's end date, guest name, or fee in place, without resetting its payment history
-- No install step — works via PYTHONPATH on any host with Python 3.11+
+- Register, list and cancel monthly parking subscriptions
+- Record each payment and see whether a subscription is paid up
+- Queue notifications before a subscription expires and when a payment is due
+
+## Getting Started
+
+```bash
+git clone https://github.com/HiTomorrow-kr/parking-subscriptions.git
+cd parking-subscriptions
+pip install -e .
+```
 
 ## Usage
 
@@ -22,41 +27,13 @@ python -m parking_subscriptions show --room 101
 python -m parking_subscriptions update --room 101 --monthly-fee 160000 --end-date 2026-11-01
 python -m parking_subscriptions pay --room 101 --date 2026-09-05  # --date defaults to today
 python -m parking_subscriptions deactivate --room 101
-python -m parking_subscriptions check-expiry
-python -m parking_subscriptions check-payments
-python -m parking_subscriptions prune-outbox --older-than-days 30
+python -m parking_subscriptions check-expiry    # queue notifications for subscriptions about to expire
+python -m parking_subscriptions check-payments  # queue notifications for payments that are due
+python -m parking_subscriptions prune-outbox --older-than-days 30  # delete delivered notifications older than 30 days
 ```
 
-Omit `--end-date` to register an open-ended subscription: it stays active and is excluded from expiry checks until explicitly cancelled with `deactivate`.
-
-`show`, `update`, `pay`, and `deactivate` accept `--room`, `--plate`, or `--id` interchangeably (exactly one). Room is the recommended identifier: it's a fixed, permanent assignment (one room = one car), so `register` rejects a room that already has an active subscription.
-
-`update` changes only the fields you pass (`--end-date`, `--guest-name`, `--monthly-fee`) and leaves payment history intact — use it instead of `deactivate` + `register` to fix a typo or extend a subscription. `prune-outbox` deletes delivered notifications older than the retention window (default 30 days); pending notifications are never touched.
-
-Every command prints a single JSON line to stdout: `{"ok": true, "data": ...}` or `{"ok": false, "error": "..."}`, exit code 0/1. Data lives at `data/parking.db` inside this repo by default; set `PARKING_SUBSCRIPTIONS_DB_PATH` only to override it (e.g. tests, or a deployment that intentionally needs a separate database).
-
-## Integration
-
-An orchestrator clones this repo on the same host and adds it to `PYTHONPATH`:
-
-```python
-import sys
-sys.path.insert(0, "/path/to/parking-subscription-worker")
-
-from parking_subscriptions.outbox import claim_unsent
-```
-
-`claim_unsent(conn)` atomically fetches pending notifications and marks them sent in one statement — use this instead of separate `fetch_unsent()`/`mark_sent()` calls whenever more than one caller (a periodic job and a manual "check now" action, say) might drain the outbox concurrently, so the same notification can't be delivered twice.
-
-## Testing
-
-```bash
-python -m pytest
-```
-
-## Documentation
-
-- [System Architecture](docs/ARCHITECTURE.md)
+- Omit `--end-date` to register without an end date. The subscription stays active until you run `deactivate`.
+- `show`, `update`, `pay` and `deactivate` take one of `--room`, `--plate` or `--id`. Prefer `--room`: a room can have only one active subscription.
 
 ## License
 
